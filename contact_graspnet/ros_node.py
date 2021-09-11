@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import os
+import sys
+import time
+
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+
+import tensorflow.compat.v1 as tf
+tf.disable_eager_execution()
+physical_devices = tf.config.experimental.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(BASE_DIR))
+import config_utils
+from contact_grasp_estimator import GraspEstimator
+
+import rospy
+from cv_bridge import CvBridge
+from contact_graspnet_planner.msg import ContactGrasp
+from contact_graspnet_planner.srv import ContactGraspNetPlanner
+from contact_graspnet_planner.srv import ContactGraspNetPlannerResponse
+
+
+def imgmsg_to_cv2(img_msg):
+    """Convert ROS Image messages to OpenCV images.
+
+    `cv_bridge.imgmsg_to_cv2` is broken on Python3.
+    `from cv_bridge.boost.cv_bridge_boost import getCvType` does not work.
+
+    Args:
+        img_msg (`sonsor_msgs/Image`): ROS Image msg
+
+    Raises:
+        NotImplementedError: Supported encodings are "8UC3" and "32FC1"
+
+    Returns:
+        `numpy.ndarray`: OpenCV image
+    """
+    # check data type
+    if img_msg.encoding == '8UC3':
+        dtype = np.uint8
+        n_channels = 3
+    elif img_msg.encoding == '32FC1':
+        dtype = np.float32
+        n_channels = 1
+    else:
+        raise NotImplementedError('custom imgmsg_to_cv2 does not support {} encoding type'.format(img_msg.encoding))
+
+    # bigendian
+    dtype = np.dtype(dtype)
+    dtype = dtype.newbyteorder('>' if img_msg.is_bigendian else '<')
+    if n_channels == 1:
+        img = np.ndarray(shape=(img_msg.height, img_msg.width),
+                         dtype=dtype, buffer=img_msg.data)
+    else:
+        img = np.ndarray(shape=(img_msg.height, img_msg.width, n_channels),
+                         dtype=dtype, buffer=img_msg.data)
+
+    # If the byt order is different between the message and the system.
+    if img_msg.is_bigendian == (sys.byteorder == 'little'):
+        img = img.byteswap().newbyteorder()
+    return img
+
+
+class GraspPlannerServer(object):
+    def __init__(self, global_config, checkpoint_dir, local_regions=True, skip_border_objects=False, filter_grasps=True, segmap_id=None, z_range=[0.2,1.8], forward_passes=1):
+        # get parameters
+        self.local_regions = local_regions
+        self.skip_border_objects = skip_border_objects
+        self.filter_grasps = filter_grasps
+        self.segmap_id = segmap_id
+        self.z_range = z_range
+        self.forward_passes = forward_passes
+
+        # Build the model
+        self.grasp_estimator = GraspEstimator(global_config)
+        self.grasp_estimator.build_network()
+
+        # Add ops to save and restore all the variables.
+        saver = tf.train.Saver(save_relative_paths=True)
+
+        # Create a session
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        config.allow_soft_placement = True
+        self.sess = tf.Session(config=config)
+
+        # Load weights
+        self.grasp_estimator.load_weights(self.sess, saver, checkpoint_dir, mode='test')
+
+        # ros cv bridge
+        self.cv_bridge = CvBridge()
+
+        # ros service
+        rospy.Service("grasp_planner", ContactGraspNetPlanner, self.plan_grasp_handler)
+        rospy.loginfo("Start Contact-GraspNet grasp planner.")
+
+    def plan_grasp_handler(self, req):
+        #############
+        # Get Input #
+        #############
+        # exmaple data format get input from npy
+        # pc_segments = {}
+        # segmap, rgb, depth, cam_K, pc_full, pc_colors = load_available_input_data(p, K=K)
+        # segmap : (720, 1280), [0,12]
+        # rgb : (720, 1280, 3)
+        # cam_K : fx=912.72143555, fy=912.7409668, cx-649.00366211, cy=363.2547192
+        # pc_full : None
+        # pc_colors : None
+
+        # unpack request massage
+        color_im, depth_im, segmask, camera_intr = self.read_images(req)
+
+        if (self.local_regions or self.filter_grasps):
+            rospy.logerr('local_regions or filter_grasp is not implemented yet.')
+
+        segmask = None
+        rospy.logwarn('TODO: Object insatnce segmenation mask is not support yet.')
+
+        # Convert depth image to point clouds
+        rospy.loginfo('Converting depth to point cloud(s)...')
+        pc_full, pc_segments, pc_colors = self.grasp_estimator.extract_point_clouds(
+            depth=depth_im,
+            segmap=segmask,
+            K=camera_intr,
+            rgb=color_im,
+            skip_border_objects=self.skip_border_objects,
+            z_range=self.z_range,
+            )
+
+        #############
+        # Gen Grasp #
+        #############
+        # if fc_full, key=-1
+        # pred_grasps_cam : dict.keys=[1, num_instance], TF(4x4) on camera coordinate
+        # scores : dict.keys=[1, num_instance]
+        # contact_pts : dict.keys=[1, num_instance], c.p(3) on camera coordinate
+
+        # Generate Grasp
+        start_time = time.time()
+        rospy.loginfo('Start to genterate grasps')
+        pred_grasps_cam, scores, contact_pts, _ = self.grasp_estimator.predict_scene_grasps(
+            self.sess,
+            pc_full,
+            pc_segments=pc_segments,
+            local_regions=self.local_regions,
+            filter_grasps=self.filter_grasps,
+            forward_passes=self.forward_passes,
+            )
+        rospy.loginfo('Generate {} grasp took {}s'.format(len(scores[-1]), time.time() - start_time))
+
+        # TODO: Now we support only pc_full
+        pred_grasps_cam = pred_grasps_cam[-1]
+        scores = scores[-1]
+        contact_pts = contact_pts[-1]
+
+        grasp_resp = ContactGraspNetPlannerResponse()
+        for i in range(len(pred_grasps_cam)):
+            grasp_msg = self.get_grasp_msg(
+                pred_grasps_cam[i],
+                scores[i],
+                contact_pts[i],
+                )
+            grasp_resp.grasps.append(grasp_msg)
+
+        return grasp_resp
+
+    def read_images(self, req):
+        """Reads images from a ROS service request.
+
+        Parameters
+        ---------
+        req: :obj:`ROS ServiceRequest`
+            ROS ServiceRequest for grasp planner service.
+        """
+        # Get the raw depth and color images as ROS `Image` objects.
+        raw_color = req.color_image
+        raw_depth = req.detph_image
+        raw_segmask = req.segmask
+
+        # Get the raw camera info as ROS `CameraInfo`.
+        raw_camera_info = req.camera_info
+
+        camera_intr = np.array([raw_camera_info.K]).reshape((3, 3))
+
+        try:
+            color_im = imgmsg_to_cv2(raw_color)
+            depth_im = imgmsg_to_cv2(raw_depth)
+            segmask = imgmsg_to_cv2(raw_segmask)
+        except NotImplementedError as e:
+            rospy.logerr(e)
+
+        return (color_im, depth_im, segmask, camera_intr)
+
+    def get_grasp_msg(self, tf_mat, score, contact_pt):
+        grasp_msg = ContactGrasp()
+
+        # # convert tf matrix to pose msg
+        # pose_msg = Pose()
+        # rot = R.from_matrix(tf_mat[0:3, 0:3])
+        # quat = rot.as_quat()
+
+        # pose_msg.position.x = tf_mat[0, 3]
+        # pose_msg.position.y = tf_mat[1, 3]
+        # pose_msg.position.z = tf_mat[2, 3]
+        # pose_msg.orientation.x = quat[0]
+        # pose_msg.orientation.y = quat[1]
+        # pose_msg.orientation.z = quat[2]
+        # pose_msg.orientation.w = quat[3]
+
+        # # conver contact point to msg
+        # point_msg = Point32()
+        # point_msg.x = contact_pt[0]
+        # point_msg.y = contact_pt[1]
+        # point_msg.z = contact_pt[2]
+
+        # # get grasp msg
+        # grasp_msg.pose.position.x
+        # grasp_msg.pose = pose_msg
+        # grasp_msg.contact_point = point_msg
+        # grasp_msg.score = score
+
+        # convert tf matrix to pose msg
+        rot = R.from_matrix(tf_mat[0:3, 0:3])
+        quat = rot.as_quat()
+        grasp_msg.pose.position.x = tf_mat[0, 3]
+        grasp_msg.pose.position.y = tf_mat[1, 3]
+        grasp_msg.pose.position.z = tf_mat[2, 3]
+        grasp_msg.pose.orientation.x = quat[0]
+        grasp_msg.pose.orientation.y = quat[1]
+        grasp_msg.pose.orientation.z = quat[2]
+        grasp_msg.pose.orientation.w = quat[3]
+
+        # conver contact point to msg
+        grasp_msg.contact_point.x = contact_pt[0]
+        grasp_msg.contact_point.y = contact_pt[1]
+        grasp_msg.contact_point.z = contact_pt[2]
+
+        # get grasp msg
+        grasp_msg.score = score
+
+        return grasp_msg
+
+
+if __name__ == "__main__":
+    # init node
+    rospy.init_node('contact_graspnet_planner')
+    rospy.loginfo("Contact GraspNet Planner is launched with Python {}".format(sys.version))
+
+    # get arguments from the ros parameter server
+    ckpt_dir = rospy.get_param('~ckpt_dir')  # default='checkpoints/scene_test_2048_bs3_hor_sigma_001', help='Log dir [default: checkpoints/scene_test_2048_bs3_hor_sigma_001]'
+    z_min = rospy.get_param('~z_min')
+    z_max = rospy.get_param('~z_max')
+    z_range = np.array([z_min, z_max])  # default=[0.2,1.8], help='Z value threshold to crop the input point cloud')
+    local_regions = rospy.get_param('~local_regions')  # action='store_true', default=False, help='Crop 3D local regions around given segments.')
+    filter_grasp = rospy.get_param('~filter_grasps')  # action='store_true', default=False,  help='Filter grasp contacts according to segmap.')
+    skip_border_objects = rospy.get_param('~skip_border_objects')  # action='store_true', default=False,  help='When extracting local_regions, ignore segments at depth map boundary.')
+    forward_passes = rospy.get_param('~forward_passes')  # type=int, default=1,  help='Run multiple parallel forward passes to mesh_utils more potential contact points.')
+    segmap_id = rospy.get_param('~segmap_id')  # type=int, default=0,  help='Only return grasps of the given object id')
+    # arg_configs = rospy.get_param('~arg_configs')  # nargs="*", type=str, default=[], help='overwrite config parameters')
+    arg_configs = []
+
+    # get global config
+    global_config = config_utils.load_config(
+        ckpt_dir,
+        batch_size=forward_passes,
+        arg_configs=arg_configs)
+
+    # print config
+    rospy.loginfo(str(global_config))
+    rospy.loginfo('pid: %s' % (str(os.getpid())))
+
+    # start Contact GraspNet Planner service
+    # global_config, checkpoint_dir, local_regions=True, skip_border_objects=False, filter_grasps=True, segmap_id=None, z_range=[0.2,1.8], forward_passes=1):
+    GraspPlannerServer(
+        global_config,
+        ckpt_dir,
+        local_regions=local_regions,
+        skip_border_objects=skip_border_objects,
+        filter_grasps=filter_grasp,
+        segmap_id=segmap_id,
+        z_range=z_range,
+        forward_passes=forward_passes)
+    rospy.spin()
