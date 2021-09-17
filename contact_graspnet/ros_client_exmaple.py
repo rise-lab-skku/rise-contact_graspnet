@@ -45,7 +45,6 @@ if __name__ == '__main__':
     grasp_estimator = GraspEstimator(global_config)
 
     rospy.loginfo('Converting depth to point cloud(s)...')
-    segmap = None
     pc_full, pc_segments, pc_colors = grasp_estimator.extract_point_clouds(
         depth=depth,
         segmap=segmap,
@@ -59,7 +58,7 @@ if __name__ == '__main__':
     cv_bridge = CvBridge()
     rgb_img_msg = cv_bridge.cv2_to_imgmsg(np.array(rgb))
     depth_img_msg = cv_bridge.cv2_to_imgmsg(np.array(depth))
-    segmask = cv_bridge.cv2_to_imgmsg(np.zeros_like(depth))
+    segmask = cv_bridge.cv2_to_imgmsg(np.array(segmap))
     camera_intr = CameraInfo()
     camera_intr.K = np.array(cam_K).reshape(9)
 
@@ -69,6 +68,7 @@ if __name__ == '__main__':
     rospy.loginfo('Wait for the grasp_plnnaer_server')
     rospy.wait_for_service(service_name)
     try:
+        rospy.loginfo("Request Contact-GraspNet grasp planning")
         grasp_planner = rospy.ServiceProxy(service_name, ContactGraspNetPlanner)
         resp = grasp_planner(
             rgb_img_msg,
@@ -76,19 +76,22 @@ if __name__ == '__main__':
             camera_intr,
             segmask,
             )
-        rospy.loginfo("Request Contact-GraspNet grasp planning")
+        rospy.loginfo("Get {} grasps from the server.".format(len(resp.grasps)))
     except rospy.ServiceException as e:
-        print("Service call failed: {}".format(e))
+        rospy.logerr("Service call failed: {}".format(e))
+
 
     # visulaize grasp
     pred_grasps_cam = {}
     scores = {}
     contact_pts = {}
 
+    id_list = []
     grasp_list = []
     scores_list = []
     contact_pts_list = []
     for grasp in resp.grasps:
+        instance_id = grasp.id
         pose_msg = grasp.pose
         score = grasp.score
         contact_pt_msg = grasp.contact_point
@@ -106,19 +109,23 @@ if __name__ == '__main__':
         contact_pt = np.array([contact_pt_msg.x, contact_pt_msg.y, contact_pt_msg.z])
 
         # append to list
+        id_list.append(instance_id)
         grasp_list.append(tf_mat)
         scores_list.append(score)
         contact_pts_list.append(contact_pt)
 
     # convert list to numpy array
+    id_list = np.array(id_list)
     grasp_list = np.array(grasp_list)
     scores_list = np.array(scores_list)
     contact_pts_list = np.array(contact_pts_list)
 
     # put on the dictionary
-    pred_grasps_cam[-1] = grasp_list
-    scores[-1] = scores_list
-    contact_pts[-1] = contact_pts_list
+    for instance_id in id_list:
+        indices = np.where(id_list == instance_id)[0]
+        pred_grasps_cam[instance_id] = grasp_list[indices]
+        scores[instance_id] = scores_list[indices]
+        contact_pts[instance_id] = contact_pts_list[indices]
 
     show_image(rgb, None)
     visualize_grasps(pc_full, pred_grasps_cam, scores, plot_opencv_cam=True, pc_colors=pc_colors)

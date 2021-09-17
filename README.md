@@ -13,10 +13,11 @@ This repository is [NVlabs/contact_graspnet](https://github.com/NVlabs/contact_g
 * `CUDA 10.2`
 * `tensorflow 2.3.1`
 
-## 1. Install Python Packages
+## 1. Prerequisite
+### 1.1 Install Python Packages
 If you don't use the conda, follow this instuction. Or you can follow original intstuction guide bellow(not tested yet). 
 
-1.1 We **highly** recomand you to use [virtual environment](https://virtualenv.pypa.io/en/latest/index.html) for python.
+1.1.1 We **highly** recomand you to use [virtual environment](https://virtualenv.pypa.io/en/latest/index.html) for python.
 
 * Genterate virtual environment on package root dir.
     ```bash
@@ -28,7 +29,7 @@ If you don't use the conda, follow this instuction. Or you can follow original i
     source venv/bin/activate
     ```
 
-1.2 Install required python packages on your `virtualenv`.
+1.1.2 Install required python packages on your `virtualenv`.
 * Tested
     ```bash
     tensorflow==2.3.1
@@ -43,11 +44,18 @@ If you don't use the conda, follow this instuction. Or you can follow original i
     scipy==1.4.1
     ```
 
+### 1.2 Troubleshooting
+* Recompile pointnet2 tf_ops:
+```shell
+sh compile_pointnet_tfops.sh
+```
+
 ## 2. Download Models and Data
 Find instuction on the official documents bellow.
 
-## 3. ROS Server Interface ([ContactGraspNetPlanner](./srv/ContactGraspNetPlanner.srv))
-### 3.1 Service Request Messages
+## 3. ROS Server Interface
+### 3.1 grasp_planner ([ContactGraspNetPlanner](./srv/ContactGraspNetPlanner.srv))
+#### 3.1.1 Service Request Messages
 * color_image ([sensor_msgs/Image](http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html))
     * Color image. It is not used for generating grasps.
 * depth_image ([sensor_msgs/Image](http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html))
@@ -55,13 +63,13 @@ Find instuction on the official documents bellow.
 * camera_info ([sensor_msgs/Camerainfo](http://docs.ros.org/en/api/sensor_msgs/html/msg/CameraInfo.html))
     * Depth camera intrinsic for deprojecting depth image to point clouds.
 * segmask ([sensor_msgs/Image](http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html))
-    * Object instance segmentation for grasp filltering. Currently grasp filtering is not supported. [Unseen Object Instance Segmentation for Robotic Environments](https://arxiv.org/abs/2007.08073) will be implemented in the future.
+    * Object instance segmentation for grasp filltering.
 
-### 3.2 Service Reponse Messages
+#### 3.1.2 Service Reponse Messages
 * grasps ([ContactGrasp[]](./msg/ContactGrasp.msg))
     * List of generated grasps.
 
-### 3.3 Arguments
+#### 3.1.3 Arguments
 * ckpt_dir (str)
     * Contact-GraspNet checkpoint directory.
     * Default: checkpoints/scene_test_2048_bs3_hor_sigma_001
@@ -85,7 +93,7 @@ Find instuction on the official documents bellow.
     * Default: 1
 * segmap_id (int)
     * Only return grasps of the given object id
-    * Default: False
+    * Default: 0
 
 ## 4. Launch ROS node
 ### 4.1 Grasp Planner Server Node

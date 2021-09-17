@@ -27,7 +27,7 @@ from contact_graspnet_planner.srv import ContactGraspNetPlannerResponse
 def imgmsg_to_cv2(img_msg):
     """Convert ROS Image messages to OpenCV images.
 
-    `cv_bridge.imgmsg_to_cv2` is broken on Python3.
+    `cv_bridge.imgmsg_to_cv2` is broken on the Python3.
     `from cv_bridge.boost.cv_bridge_boost import getCvType` does not work.
 
     Args:
@@ -114,11 +114,14 @@ class GraspPlannerServer(object):
         # unpack request massage
         color_im, depth_im, segmask, camera_intr = self.read_images(req)
 
-        if (self.local_regions or self.filter_grasps):
-            rospy.logerr('local_regions or filter_grasp is not implemented yet.')
-
-        segmask = None
-        rospy.logwarn('TODO: Object insatnce segmenation mask is not support yet.')
+        if np.mean(segmask) == -1:
+            segmask = None
+            rospy.logwarn('No segmentation mask. Generate grasp with full scene.')
+            if (self.local_regions or self.filter_grasps):
+                rospy.logerr('For the invalid segmentation mask, local_regions or filter_grasp should be False.')
+        else:
+            rospy.loginfo('Num instance id: {}, filter_grasp: {}, local_region: {}'.format(
+                np.max(segmask), self.filter_grasps, self.local_regions))
 
         # Convert depth image to point clouds
         rospy.loginfo('Converting depth to point cloud(s)...')
@@ -139,7 +142,7 @@ class GraspPlannerServer(object):
         # scores : dict.keys=[1, num_instance]
         # contact_pts : dict.keys=[1, num_instance], c.p(3) on camera coordinate
 
-        # Generate Grasp
+        # Generate grasp
         start_time = time.time()
         rospy.loginfo('Start to genterate grasps')
         pred_grasps_cam, scores, contact_pts, _ = self.grasp_estimator.predict_scene_grasps(
@@ -150,21 +153,15 @@ class GraspPlannerServer(object):
             filter_grasps=self.filter_grasps,
             forward_passes=self.forward_passes,
             )
-        rospy.loginfo('Generate {} grasp took {}s'.format(len(scores[-1]), time.time() - start_time))
 
-        # TODO: Now we support only pc_full
-        pred_grasps_cam = pred_grasps_cam[-1]
-        scores = scores[-1]
-        contact_pts = contact_pts[-1]
-
+        # Generate grasp responce msg
         grasp_resp = ContactGraspNetPlannerResponse()
-        for i in range(len(pred_grasps_cam)):
-            grasp_msg = self.get_grasp_msg(
-                pred_grasps_cam[i],
-                scores[i],
-                contact_pts[i],
-                )
-            grasp_resp.grasps.append(grasp_msg)
+        for instance_id in pred_grasps_cam.keys():
+            grasp_score_cp = zip(pred_grasps_cam[instance_id], scores[instance_id], contact_pts[instance_id])
+            for grasp, score, contact_pt in grasp_score_cp:
+                grasp_msg = self.get_grasp_msg(instance_id, grasp, score, contact_pt)
+                grasp_resp.grasps.append(grasp_msg)
+        rospy.loginfo('Generate grasp {} took {}s'.format(len(grasp_resp.grasps), time.time() - start_time))
 
         return grasp_resp
 
@@ -195,33 +192,11 @@ class GraspPlannerServer(object):
 
         return (color_im, depth_im, segmask, camera_intr)
 
-    def get_grasp_msg(self, tf_mat, score, contact_pt):
+    def get_grasp_msg(self, id, tf_mat, score, contact_pt):
         grasp_msg = ContactGrasp()
 
-        # # convert tf matrix to pose msg
-        # pose_msg = Pose()
-        # rot = R.from_matrix(tf_mat[0:3, 0:3])
-        # quat = rot.as_quat()
-
-        # pose_msg.position.x = tf_mat[0, 3]
-        # pose_msg.position.y = tf_mat[1, 3]
-        # pose_msg.position.z = tf_mat[2, 3]
-        # pose_msg.orientation.x = quat[0]
-        # pose_msg.orientation.y = quat[1]
-        # pose_msg.orientation.z = quat[2]
-        # pose_msg.orientation.w = quat[3]
-
-        # # conver contact point to msg
-        # point_msg = Point32()
-        # point_msg.x = contact_pt[0]
-        # point_msg.y = contact_pt[1]
-        # point_msg.z = contact_pt[2]
-
-        # # get grasp msg
-        # grasp_msg.pose.position.x
-        # grasp_msg.pose = pose_msg
-        # grasp_msg.contact_point = point_msg
-        # grasp_msg.score = score
+        # set instance id
+        grasp_msg.id = id
 
         # convert tf matrix to pose msg
         rot = R.from_matrix(tf_mat[0:3, 0:3])
@@ -274,7 +249,6 @@ if __name__ == "__main__":
     rospy.loginfo('pid: %s' % (str(os.getpid())))
 
     # start Contact GraspNet Planner service
-    # global_config, checkpoint_dir, local_regions=True, skip_border_objects=False, filter_grasps=True, segmap_id=None, z_range=[0.2,1.8], forward_passes=1):
     GraspPlannerServer(
         global_config,
         ckpt_dir,
