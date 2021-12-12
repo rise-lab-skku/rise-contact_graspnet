@@ -43,8 +43,17 @@ def imgmsg_to_cv2(img_msg):
     if img_msg.encoding == '8UC3':
         dtype = np.uint8
         n_channels = 3
+    elif img_msg.encoding == 'bgr8':
+        dtype = np.uint8
+        n_channels = 3
+    elif img_msg.encoding == 'rgb8':
+        dtype = np.uint8
+        n_channels = 3
     elif img_msg.encoding == '32FC1':
         dtype = np.float32
+        n_channels = 1
+    elif img_msg.encoding == '64FC1':
+        dtype = np.float64
         n_channels = 1
     else:
         raise NotImplementedError('custom imgmsg_to_cv2 does not support {} encoding type'.format(img_msg.encoding))
