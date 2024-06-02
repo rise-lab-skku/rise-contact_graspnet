@@ -1,4 +1,4 @@
-# RISE Contact-GraspNet Test Repository
+# RISE Contact-GraspNet Test Repository (ROS2)
 > NOTE: This section is a not part of the official document. If your looking for orignal document, go down to find the official contents or go to the [orignal repository](https://github.com/NVlabs/contact_graspnet).
 
 ![Python](https://img.shields.io/badge/Python-3.6.9-blue)
@@ -6,16 +6,20 @@
 ![ROS](https://img.shields.io/badge/ROS-melodic-yellow)
 ![Tensorflow](https://img.shields.io/badge/tensorflow-2.3.1-orange)
 
-This repository is [NVlabs/contact_graspnet](https://github.com/NVlabs/contact_graspnet) with ROS implementation for testing purpose. The code has been tested with following system.
+
+TODO: README 버전 ROS2로 고치기
+
+
+<!-- This repository is [NVlabs/contact_graspnet](https://github.com/NVlabs/contact_graspnet) with ROS implementation for testing purpose. The code has been tested with following system.
 * `Ubuntu 18.04`
 * `Python 3.6.9`
 * `ROS-melodic`
 * `CUDA 10.2`
-* `tensorflow 2.3.1`
+* `tensorflow 2.3.1` -->
 
 ## 1. Prerequisite
 ### 1.1 Install Python Packages
-If you don't use the conda, follow this instuction. Or you can follow original intstuction guide bellow(not tested yet). 
+If you don't use the conda, follow this instuction. Or you can follow original intstuction guide bellow(not tested yet).
 
 1.1.1 We **highly** recomand you to use [virtual environment](https://virtualenv.pypa.io/en/latest/index.html) for python.
 
@@ -108,9 +112,9 @@ python contact_graspnet/ros_client_exmaple.py --ckpt_dir checkpoints/scene_test_
 # Contact-GraspNet
 > ORIGINAL README DOCUMENT
 
-### Contact-GraspNet: Efficient 6-DoF Grasp Generation in Cluttered Scenes   
-Martin Sundermeyer, Arsalan Mousavian, Rudolph Triebel, Dieter Fox  
-ICRA 2021    
+### Contact-GraspNet: Efficient 6-DoF Grasp Generation in Cluttered Scenes
+Martin Sundermeyer, Arsalan Mousavian, Rudolph Triebel, Dieter Fox
+ICRA 2021
 
 [paper](https://arxiv.org/abs/2103.14127), [project page](https://research.nvidia.com/publication/2021-03_Contact-GraspNet%3A--Efficient), [video](http://www.youtube.com/watch?v=qRLKYSLXElM)
 
@@ -135,7 +139,7 @@ sh compile_pointnet_tfops.sh
 ```
 
 ### Hardware
-Training: 1x Nvidia GPU >= 24GB VRAM, >=64GB RAM  
+Training: 1x Nvidia GPU >= 24GB VRAM, >=64GB RAM
 Inference: 1x Nvidia GPU >= 8GB VRAM (might work with less)
 
 ## Download Models and Data
@@ -169,19 +173,19 @@ python contact_graspnet/inference.py --np_path=/path/to/your/pc.npy \
                                      --z_range=[0.2,1.1]
 ```
 
-`--np_path`: input .npz/.npy file(s) with 'depth', 'K' and optionally 'segmap', 'rgb' keys. For processing a Nx3 point cloud instead use 'xzy' and optionally 'xyz_color' as keys.  
-`--ckpt_dir`: relative path to checkpooint directory. By default `checkpoint/scene_test_2048_bs3_hor_sigma_001` is used. For very clean / noisy depth data consider `scene_2048_bs3_rad2_32` / `scene_test_2048_bs3_hor_sigma_0025` trained with no / strong noise.   
-`--local_regions`: Crop 3D local regions around object segments for inference. (only works with segmap)  
-`--filter_grasps`: Filter grasp contacts such that they only lie on the surface of object segments. (only works with segmap)  
-`--skip_border_objects` Ignore segments touching the depth map boundary.  
-`--forward_passes` number of (batched) forward passes. Increase to sample more potential grasp contacts.  
-`--z_range` [min, max] z values in meter used to crop the input point cloud, e.g. to avoid grasps in the foreground/background(as above).  
-`--arg_configs TEST.second_thres:0.19 TEST.first_thres:0.23` Overwrite config confidence thresholds for successful grasp contacts to get more/less grasp proposals 
+`--np_path`: input .npz/.npy file(s) with 'depth', 'K' and optionally 'segmap', 'rgb' keys. For processing a Nx3 point cloud instead use 'xzy' and optionally 'xyz_color' as keys.
+`--ckpt_dir`: relative path to checkpooint directory. By default `checkpoint/scene_test_2048_bs3_hor_sigma_001` is used. For very clean / noisy depth data consider `scene_2048_bs3_rad2_32` / `scene_test_2048_bs3_hor_sigma_0025` trained with no / strong noise.
+`--local_regions`: Crop 3D local regions around object segments for inference. (only works with segmap)
+`--filter_grasps`: Filter grasp contacts such that they only lie on the surface of object segments. (only works with segmap)
+`--skip_border_objects` Ignore segments touching the depth map boundary.
+`--forward_passes` number of (batched) forward passes. Increase to sample more potential grasp contacts.
+`--z_range` [min, max] z values in meter used to crop the input point cloud, e.g. to avoid grasps in the foreground/background(as above).
+`--arg_configs TEST.second_thres:0.19 TEST.first_thres:0.23` Overwrite config confidence thresholds for successful grasp contacts to get more/less grasp proposals
 
 
 ## Training
 
-### Download Data 
+### Download Data
 
 Download the Acronym dataset, ShapeNet meshes and make them watertight, following these [steps](https://github.com/NVlabs/acronym#using-the-full-acronym-dataset).
 
