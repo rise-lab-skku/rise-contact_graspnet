@@ -35,11 +35,13 @@ RUN pip install \
     protobuf==3.20.3 \
     opencv-python==4.4.0.40 \
     pyglet==1.5.29 \
-    pyrender==0.1.45 \
-    mayavi \
-    PyQt5 \
-    trimesh \
-    scipy \
+    pyrender==0.1.45 
+    
+RUN pip install \  
+    #mayavi==4.7.3 \
+    # PyQt5==5.15.4 \
+    trimesh==3.9.29 \
+    scipy==1.4.1 \
     pillow \
     tqdm \
     pyyaml
