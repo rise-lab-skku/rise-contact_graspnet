@@ -1,4 +1,4 @@
-FROM tf_base:latest
+FROM tensorflow_base:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
   && locale-gen en_US.UTF-8 \
   && update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 \
   && rm -rf /var/lib/apt/lists/*
-ENV LANG en_US.UTF-8
+ENV LANG=en_US.UTF-8
 
 # Install timezone
 RUN ln -fs /usr/share/zoneinfo/UTC /etc/localtime \

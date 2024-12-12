@@ -1,15 +1,22 @@
 # From Author
 results
-checkpoints/*
+# checkpoints/*
 *.npz
 **/*.pyc
 **/__pycache__
 .vscode
 
 # test_data
-test_data
+# test_data/*
 
 # Virtualenv
 venv
 
 temp/
+
+# TensorFlow Ops
+pointnet2/tf_ops/sampling/tf_sampling_so.so
+pointnet2/tf_ops/sampling/tf_sampling_g.cu.o
+pointnet2/tf_ops/sampling/1.pkl
+pointnet2/tf_ops/grouping/tf_grouping_so.so
+pointnet2/tf_ops/grouping/tf_grouping_g.cu.o

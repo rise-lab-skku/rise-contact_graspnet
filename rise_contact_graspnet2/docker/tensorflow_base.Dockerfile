@@ -23,9 +23,9 @@ RUN apt-get update && apt-get install -y \
     software-properties-common
 
 # Env vars for the nvidia-container-runtime.
-ENV NVIDIA_VISIBLE_DEVICES all
-ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
-ENV QT_X11_NO_MITSHM 1
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute
+ENV QT_X11_NO_MITSHM=1
 ENV XDG_RUNTIME_DIR=/tmp
 
 # Tensorflow
@@ -35,9 +35,9 @@ RUN pip install \
     protobuf==3.20.3 \
     opencv-python==4.4.0.40 \
     pyglet==1.5.29 \
-    pyrender==0.1.45 
-    
-RUN pip install \  
+    pyrender==0.1.45
+
+RUN pip install \
     #mayavi==4.7.3 \
     # PyQt5==5.15.4 \
     trimesh==3.9.29 \

@@ -184,6 +184,8 @@ class Main(Node):
 
     def run(self):
         while rclpy.ok():
+            # 카메라 토픽이 들어오지 않으면, spin_once에서 무한 대기 상태가 된다.
+            # See: http://wiki.ros.org/roscpp/Overview/Callbacks%20and%20Spinning
             rclpy.spin_once(self)
             if self.rgb_received and self.depth_received and self.camera_info_received:
                 user_input = (
