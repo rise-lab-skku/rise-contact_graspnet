@@ -21,8 +21,9 @@ from cv_bridge import CvBridge
 from sensor_msgs.msg import CameraInfo, Image
 from rise_contact_msg2.srv import ContactGraspNetPlanner
 from tf2_ros import TransformBroadcaster
-from geometry_msgs.msg import TransformStamped, Pose
+from geometry_msgs.msg import TransformStamped, Pose, PoseArray
 
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 
 class Main(Node):
     def __init__(self):
@@ -37,27 +38,42 @@ class Main(Node):
             CameraInfo, "/camera/color/camera_info", self.camera_info_callback, 10
         )
         self.grasp_result_publisher = self.create_publisher(Pose, "/cgn_grasp_point", 1)
-        self.tf_broadcaster = TransformBroadcaster(self)
+        self.grasp_candidate_publisher = self.create_publisher(PoseArray, "/indy_grasp_candidates", 1)
+
+
+
+        qos = QoSProfile(
+            depth=1,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
+        )
+        self.tf_broadcaster = TransformBroadcaster(self, qos)
 
         self.rgb_received = False
         self.depth_received = False
         self.camera_info_received = False
 
-        # get sample data
-        sample_data_path = "/home/ros_ws/src/rise_contact_graspnet2/test_data/7.npy"
-        segmap, rgb, depth, cam_K, pc_full, pc_colors = load_available_input_data(
-            sample_data_path, K=None
-        )
+        # # get sample data
+        # sample_data_path = "/home/ros_ws/src/rise_contact_graspnet2/test_data/7.npy"
+        # segmap, rgb, depth, cam_K, pc_full, pc_colors = load_available_input_data(
+        #     sample_data_path, K=None
+        # )
+        self.cv_bridge = CvBridge()
+        h, w = 720, 1280
+        self.segmask = np.ones((h, w), dtype=np.uint8)
+        border_percent = 50  # 테두리 마스크 비율 (%)
+        border_h = int(h * border_percent / 100)
+        border_w = int(w * border_percent / 100)
+        self.segmask[border_h:-border_h, border_w:-border_w] = 1
+        self.segmask = self.cv_bridge.cv2_to_imgmsg(self.segmask)
         # self.get_logger().info("Load exmaple datas: {}".format(sample_data_path))
 
         # conver to ros input data
-        self.cv_bridge = CvBridge()
         # print("rgb size: ", np.array(rgb).shape)
         # print("depth size: ", np.array(depth).shape)
         # rgb_img_msg = cv_bridge.cv2_to_imgmsg(np.array(rgb))
         # depth_img_msg = self.cv_bridge.cv2_to_imgmsg(np.array(depth))
         # print("depth_img_msg: ", depth_img_msg.data, flush=True)
-        self.segmask = self.cv_bridge.cv2_to_imgmsg(np.array(segmap))
+        # self.segmask = self.cv_bridge.cv2_to_imgmsg(np.array(segmap))
         # camera_intr = CameraInfo()
         # camera_intr.k = np.array(cam_K).reshape(9)
 
@@ -109,28 +125,68 @@ class Main(Node):
         transform = TransformStamped()
         # Set the header
         transform.header.stamp = self.get_clock().now().to_msg()
-        transform.header.frame_id = "camera_depth_optical_frame"
+        transform.header.frame_id = "camera_color_optical_frame"
         self.min_z_idx = 0
         self.max_score_idx = 0
         self.min_z = 1000
         self.max_score = 0
 
+        self.best_aligned_idx = 0
+        self.best_alignment = -1
+
+        pose_array = PoseArray()
+        pose_array.header.frame_id = "camera_color_optical_frame"
+        pose_array.header.stamp = self.get_clock().now().to_msg()
+
         for i, grasp in enumerate(resp_result.grasps):
-            # # Set the child frame ID
-            # transform.child_frame_id = "grasp_result" + str(i)
+            # ROI 안에 있는 pose만 저장
+            x = grasp.pose.position.x
+            y = grasp.pose.position.y
 
-            # # Set translation
-            # transform.transform.translation.x = grasp.pose.position.x
-            # transform.transform.translation.y = grasp.pose.position.y
-            # transform.transform.translation.z = grasp.pose.position.z
+            # ROI 범위 설정 (원하는 값으로 수정)
+            x_min, x_max = -0.2, 0.2  # x 범위
+            y_min, y_max = -0.15, 0.15  # y 범위
 
-            if grasp.pose.position.z < self.min_z:
-                self.min_z_idx = i
-                self.min_z = grasp.pose.position.z
+            if x_min <= x <= x_max and y_min <= y <= y_max:
+                pose_array.poses.append(grasp.pose)
 
-            if grasp.score > self.max_score:
-                self.max_score_idx = i
-                self.max_score = self.max_score_idx
+                # grasp pose의 z축 방향 추출 (쿼터니언을 회전행렬로 변환)
+                quat = [
+                    grasp.pose.orientation.x,
+                    grasp.pose.orientation.y,
+                    grasp.pose.orientation.z,
+                    grasp.pose.orientation.w
+                ]
+                rot_mat = R.from_quat(quat).as_matrix()
+                z_axis = rot_mat[:, 2]  # 3번째 열이 z축 방향
+
+                # z축과의 alignment 계산 (dot product)
+                alignment = z_axis[2]  # [0, 0, 1]과의 내적
+
+                if alignment > self.best_alignment:
+                    self.best_aligned_idx = i
+                    self.best_alignment = alignment
+
+                if grasp.score > self.max_score:
+                    self.max_score_idx = i
+                    self.max_score = grasp.score
+
+        # for i, grasp in enumerate(resp_result.grasps):
+        #     # # Set the child frame ID
+        #     # transform.child_frame_id = "grasp_result" + str(i)
+
+        #     # # Set translation
+        #     # transform.transform.translation.x = grasp.pose.position.x
+        #     # transform.transform.translation.y = grasp.pose.position.y
+        #     # transform.transform.translation.z = grasp.pose.position.z
+
+        #     if grasp.pose.position.z < self.min_z:
+        #         self.min_z_idx = i
+        #         self.min_z = grasp.pose.position.z
+
+        #     if grasp.score > self.max_score:
+        #         self.max_score_idx = i
+        #         self.max_score = self.max_score_idx
 
             # print("\n grasp # ", i, flush=True)
             # print("score: ", grasp.score, flush=True)
@@ -148,22 +204,22 @@ class Main(Node):
 
         # Set translation
         transform.transform.translation.x = resp_result.grasps[
-            self.min_z_idx
+            self.best_aligned_idx
         ].pose.position.x
         transform.transform.translation.y = resp_result.grasps[
-            self.min_z_idx
+            self.best_aligned_idx
         ].pose.position.y
         transform.transform.translation.z = resp_result.grasps[
-            self.min_z_idx
+            self.best_aligned_idx
         ].pose.position.z
 
         # Set rotation
         transform.transform.rotation = resp_result.grasps[
-            self.min_z_idx
+            self.best_aligned_idx
         ].pose.orientation
 
         self.tf_broadcaster.sendTransform(transform)
-        self.grasp_result_publisher.publish(resp_result.grasps[self.min_z_idx].pose)
+        self.grasp_result_publisher.publish(resp_result.grasps[self.best_aligned_idx].pose)
 
         transform.child_frame_id = "max_score"
         transform.transform.translation.x = resp_result.grasps[
@@ -182,6 +238,8 @@ class Main(Node):
         ].pose.orientation
         self.tf_broadcaster.sendTransform(transform)
 
+        self.grasp_candidate_publisher.publish(pose_array)
+
     def run(self):
         while rclpy.ok():
             # 카메라 토픽이 들어오지 않으면, spin_once에서 무한 대기 상태가 된다.
@@ -198,6 +256,9 @@ class Main(Node):
                         self.cv_bridge.imgmsg_to_cv2(self.depth_data, "passthrough")
                         / 1000.0
                     )
+
+                    max_depth = cv2_depth.max()
+                    cv2_depth[cv2_depth < 0.3] = max_depth
                     depth_img = self.cv_bridge.cv2_to_imgmsg(cv2_depth)
                     resp_result = self.send_request(
                         self.rgb_data, depth_img, self.segmask, self.camera_info
